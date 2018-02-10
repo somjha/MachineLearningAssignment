@@ -1,0 +1,120 @@
+---
+title: "Practical Machine Learning Project Assignment"
+author: "Somprabh Jha"
+date: "February 9, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Overview
+Six participants were asked to perform barbell lifts correctly and incorrectly in 5 different ways. In the "classe" variable an "A" corresponds to the correct execution of the exercise, while the other 4 classes (B through E) correspond to common mistakes. By using data from accelerometers on the belt, forearm, arm, and dumbell my goal is to predict which class the observation falls in.  
+
+So I first setup the needed environment and get the training & test datasets.
+```{r setup1}
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(RColorBrewer)
+library(rattle)
+library(randomForest)
+library(knitr)
+library(gbm)
+library(e1071)
+setwd("E:/DataScience/MachineLearning/Week4/ProgrammingAssignment")
+trainUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+training <- read.csv(url(trainUrl), na.strings=c("NA","#DIV/0!",""))
+testing <- read.csv(url(testUrl), na.strings=c("NA","#DIV/0!",""))
+```
+
+## Preparing Data
+I will remove columns that I think do not help in predicting the outcome. So I will remove all columns whose values show very little variance, then remove the first seven columns which are timestamp or data that has no bearing on outcome and then finally remove columns which have more than 50% NAs. Finally as there are more than enough rows in the dataset I will partition the training dataset to create a small testing dataset to validate our models.
+```{r datacleanup}
+# Remove columns that have almost no variance in their values
+nvtraining <- nearZeroVar(training, saveMetrics=TRUE)
+mytrainingsub <- training[,nvtraining$nzv==FALSE]
+nvtesting <- nearZeroVar(testing,saveMetrics=TRUE)
+mytestingsub <- testing[,nvtesting$nzv==FALSE]
+
+# Remove the first 6 (not predictors) columns from the training dataset
+mytrainingsub <- mytrainingsub[,7:length(colnames(mytrainingsub))]
+
+# Count the number of NAs in each col
+nonnaCols <- as.vector(apply(mytrainingsub, 2, function(mytrainingsub) length(which(!is.na(mytrainingsub)))))
+# Drop columns that have more than 50% NAs
+dropNAs <- c()
+for (i in 1:length(nonnaCols)) {
+    if (nonnaCols[i] > nrow(mytrainingsub)*.50) {
+        dropNAs <- c(dropNAs, colnames(mytrainingsub)[i])
+    }
+}
+#drop NA data in training and testing
+mytrainingsub <- mytrainingsub[,(names(mytrainingsub) %in% dropNAs)]
+#remove classe as it's not contained in testing
+keepcols <- colnames(mytrainingsub[, -53]) 
+mytestingsub <- mytestingsub[keepcols]
+
+# As we havea decent number of records I will create a test dataset for my testing
+intrain <- createDataPartition(mytrainingsub$classe, p=0.6, list=FALSE)
+mytrainingfin <- mytrainingsub[intrain, ]
+mytestingfin <- mytrainingsub[-intrain, ]
+```
+
+## Model Analysis
+
+First we will try the Decision Trees model and analyse the results.
+```{r decisiontrees}
+set.seed(107)
+moddt <- rpart(classe~., data=mytrainingfin, method="class")
+fancyRpartPlot(moddt)
+
+
+predictionsdt <- predict(moddt, mytestingfin, type = "class")
+cmdt <- confusionMatrix(predictionsdt, mytestingfin$classe)
+cmdt
+
+```
+
+Next we will try the Random Forests model and analyse the results.
+```{r randomforests}
+set.seed(107)
+modrf <- randomForest(classe ~ ., data=mytrainingfin)
+plot(modrf)
+
+predictionrf <- predict(modrf, mytestingfin, type = "class")
+cmrf <- confusionMatrix(predictionrf, mytestingfin$classe)
+ooserr <- 1-cmrf$overall['Accuracy']
+cmrf
+
+```
+
+
+Lastly we will try Generalized Boosted Regresssion and analyse the results.
+```{r generalizedboostedregression}
+set.seed(107)
+fitControl <- trainControl(method="repeatedcv", number=5, repeats= 1)
+gbmFit1 <- train(classe~., data=mytrainingfin, method="gbm", trControl=fitControl,
+                 verbose=FALSE)
+gbmFinMod1 <- gbmFit1$finalModel
+plot(gbmFit1, ylim=c(0.9, 1))
+
+predictgbm <- predict(gbmFit1, newdata=mytestingfin)
+cmgbm <- confusionMatrix(predictgbm, mytestingfin$classe)
+cmgbm
+
+```
+
+## Conclusion
+
+Random Forests gave an accuracy in the mytestingfin dataset of `r cmrf$overall['Accuracy']`, which was more accurate than what I got from the Decision Trees (`r cmdt$overall['Accuracy']`) or GBM (`r cmgbm$overall['Accuracy']`). The expected out-of-sample error is `r ooserr`.
+
+So let us select this model and apply it to the test dataset for the assignment
+
+```{r applyselectedmodel}
+predictiontest <- predict(modrf, testing, type = "class")
+predictiontest
+```
+
